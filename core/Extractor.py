@@ -5,7 +5,6 @@ from colorama import Fore
 from scapy.all import TCP, IP, Raw, rdpcap
 from typing import Union, List, Tuple, Dict
 import urllib.parse
-import logging 
 import shutil
 import datetime
 import re 
@@ -43,6 +42,7 @@ class BaseExtractor:
         payloads = []
         try:
             for pkt in packets:
+                self._print_header(pkt)
                 if (pkt.haslayer(TCP) and pkt.haslayer(IP)):
                     if pkt[IP].src == self.ip or pkt[IP].dst == self.ip:
                         payload = bytes(pkt[TCP].payload)
@@ -56,7 +56,7 @@ class BaseExtractor:
     def _extract_b64_pl_data(self, payloads, export: bool) -> List[Tuple[str, int]]:
         pl_data = ""
         b64_expression = r'(?:(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)'
-
+        
         try:
             for session_id, data in payloads.items():
                 self.logger.info(f"Session ID: {session_id}")
@@ -130,11 +130,8 @@ class BaseExtractor:
 class ShellSearcher:
     def __init__(self, pcap):
         self.pcap = pcap
-
-        logging.basicConfig(filename=log_path, level=logging.INFO,
-            format='%(asctime)s - %(name)s -%(levelname)s - %(message)s')
-        self.logger = logging.getLogger(__name__)
-    
+        self.logger = init_logger(log_path)
+        
     def run(self):
         self._extract_shells()
         self._extract_hex_key()
@@ -143,6 +140,7 @@ class ShellSearcher:
         print(Fore.GREEN + ">> Searching for keys..\n")
         hex_expression = r'["\']([0-9A-Fa-f]+)["\']'
         packets = rdpcap(self.pcap)
+        
         for pkt in packets:
             if pkt.haslayer(Raw) and pkt.haslayer(TCP):
                 payload = pkt[Raw].load
@@ -160,17 +158,19 @@ class ShellSearcher:
         output_file = os.path.join(ex_webshells_path, f"webshell_{ts}.txt")
         packets = rdpcap(self.pcap)
         payloads = {}
+        ex_payloads = set()
 
         # TODO: Cleanup strings/logic and add more for other webshells.
-        # Currently will write out a copy of the payload that contains the webshell each time a string is found.
-
+        
         ws_strings = [
-            'string p =', 'string key', 'string md5', 'byte[] a =', 'byte[] data =', 'string pass =', 'string r = Request.Form["data"]', 
+            'object[] iN = new object[] {r, p}', 'byte[] a =', 'byte[] data =', 'string pass =', 'string r = Request.Form["data"]', 
             'aS.CreateInstance("SharPy")', '<% Import Namespace="System.Reflection" %>', '0x2f,0x6e,0xf6,0x63,0x36,0x38,0x34',
-            '\160\x68\141\x72\72\57\57', 'Context.Session["payload"] == null', 'stringBuilder.Append(md5.Substring(0, 16))', 
+            'Xor Asc(Mid(key,(i mod keySize)+1,1)))', 'Context.Session["payload"] == null', 'stringBuilder.Append(md5.Substring(0, 16))', 
             '((System.Reflection.Assembly)Context.Session["payload"]).CreateInstance("LY")', '$c = $K[$i+1&15]', '$D[$i] = $D[$i]^$c',
             'stringBuilder.Append(md5.Substring(16))', '<%@ Page Language="Jscript"%><%eval(Request.Item["', '$payloadName=', 
-            '$payload=encode($_SESSION[$payloadName],$key)'
+            '$payload=encode($_SESSION[$payloadName],$key)', 'String xc=', 'xc.getBytes(),"AES"', 'CreateInstance("LY")', 
+            'object o = ((System.Reflection.Assembly', 'pass + key))).Replace', '<%@ Page Language="Jscript"%><%eval(Request.Item["', 
+            'string key="', '<?php include "\160\x68\141\x72\72\57\57"', 'basename(__FILE__)."\57\x78";__HALT_COMPILER()'
         ]
 
         print(Fore.GREEN + ">> Searching for shell strings in payloads..")
@@ -187,10 +187,12 @@ class ShellSearcher:
             for string in ws_strings:
                 for i, pl in payloads.items():
                     if string in str(pl):
-                        print(Fore.YELLOW + f">> Potential webshell found from: {i}")
-                        print(Fore.WHITE + f">> Check {ex_webshells_path}\n")
-                        with open(output_file, "a") as ws_file:
-                            ws_file.write(f"IP: {i}\n Payload: {pl.decode('utf-8', errors='ignore')}\n\n")
+                        if pl not in ex_payloads:
+                            print(Fore.YELLOW + f">> Potential webshell found from: {i}")
+                            print(Fore.WHITE + f">> Check {ex_webshells_path}\n")
+                            with open(output_file, "a") as ws_file:
+                                ws_file.write(f"IP: {i}\n Payload: {pl.decode('utf-8', errors='ignore')}\n\n")
+                            ex_payloads.add(pl)
         except Exception as e:
             self.logger.error(f">> Error searching for shell strings: {e}")
         
