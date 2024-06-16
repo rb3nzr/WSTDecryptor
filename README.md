@@ -6,7 +6,8 @@ Currently only contains modules for [SharPyShell](https://github.com/antonioCoco
 
 ## Usage 
 
-```pip3 install -r requirements.txt
+```
+pip3 install -r requirements.txt
 ```
 - `php-cli` must be installed if using the Weevely3 module.
 - `powershell` must be on the machine if using `--extract` with the SharPyShell module.
