@@ -1,0 +1,4 @@
+colorama
+scapy
+requests
+pycryptodome 
