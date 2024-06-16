@@ -1,6 +1,6 @@
 # WSTDecryptor
 
-*WSTDecryptor is a tool to automatically extract and decrypt communications sent to a webshell/backdoor from a pcap(ng). [Heavy WIP]*
+WSTDecryptor is a tool to automatically extract and decrypt communications sent to a webshell/backdoor from a pcap(ng). **[Heavy WIP]**
 
 Currently only contains modules for [SharPyShell](https://github.com/antonioCoco/SharPyShell), [Godzilla](https://github.com/BeichenDream/Godzilla), and [Weevely3](https://github.com/epinna/weevely3). 
 
