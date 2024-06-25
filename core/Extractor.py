@@ -1,9 +1,8 @@
 from core.Config import *
 from core.Utility import init_logger
 
-from colorama import Fore
 from scapy.all import TCP, IP, Raw, rdpcap
-from typing import Union, List, Tuple, Dict
+from typing import List, Tuple, Dict
 import urllib.parse
 import shutil
 import datetime
@@ -11,12 +10,14 @@ import re
 import os 
 
 class BaseExtractor:
-    def __init__(self, pcap, ip):
+    def __init__(self, pcap, ip, port):
         self.pcap = pcap 
-        self.ip = ip 
-        self.logger = init_logger(log_path)
+        self.ip = ip
+        self.port = port 
+        self.logger = init_logger('BaseExtractor', log_path)
 
-        self.logger.info(f"Initialized pcap: {self.pcap} ip {self.ip}")
+        self.logger.info(f"===============================================")
+        self.logger.info(f">> Initialized pcap: {self.pcap} ip: {self.ip}")
     
     # Extract the TCP segments/payloads from ip packets that match the ip arg passed
     def _extract_payloads(self) -> Dict[Tuple[str, int, str, int], bytes]:
@@ -27,11 +28,14 @@ class BaseExtractor:
                 self._print_header(pkt)
                 if (pkt.haslayer(TCP) and pkt.haslayer(IP)):
                     if pkt[IP].src == self.ip or pkt[IP].dst == self.ip:
-                        session_id = (pkt[IP].src, pkt[TCP].sport, pkt[IP].dst, pkt[TCP].dport)
-                        if session_id in payloads:
-                            payloads[session_id] += bytes(pkt[TCP].payload)
-                        else:
-                            payloads[session_id] = bytes(pkt[TCP].payload)
+                        if pkt[TCP].dport == self.port or pkt[TCP].sport == self.port:
+                            session_id = (pkt[IP].src, pkt[TCP].sport, pkt[IP].dst, pkt[TCP].dport)
+                            if session_id in payloads:
+                                payloads[session_id] += bytes(pkt[TCP].payload)
+                            else:
+                                payloads[session_id] = bytes(pkt[TCP].payload)
+                        if pkt[TCP].dport == 443 or pkt[TCP].sport == 443:
+                            self.logger.warning(">> HTTPS traffic found")
         except Exception as e:
             self.logger.error(f">> Error extracting payloads: {e}")
         return payloads
@@ -45,49 +49,52 @@ class BaseExtractor:
                 self._print_header(pkt)
                 if (pkt.haslayer(TCP) and pkt.haslayer(IP)):
                     if pkt[IP].src == self.ip or pkt[IP].dst == self.ip:
-                        payload = bytes(pkt[TCP].payload)
-                        idx = payload.find(delimiter) + len(delimiter)
-                        slice_ = payload[idx:]
-                        payloads.append(slice_)
+                        if pkt[TCP].dport == self.port or pkt[TCP].sport == self.port:
+                            payload = bytes(pkt[TCP].payload)
+                            idx = payload.find(delimiter) + len(delimiter)
+                            slice_ = payload[idx:]
+                            payloads.append(slice_)
+                        if pkt[TCP].dport == 443 or pkt[TCP].sport == 443:
+                            self.logger.warning(">> HTTPS traffic found")
         except Exception as e:
-            print(e)
+            self.logger.error(f">> Error extracting payloads: {e}")
         return payloads
     
-    def _extract_b64_pl_data(self, payloads, export: bool) -> List[Tuple[str, int]]:
+    def _extract_b64_pl_data(self, payloads) -> List[Tuple[str, int]]:
         pl_data = ""
         b64_expression = r'(?:(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)'
         
         try:
             for session_id, data in payloads.items():
-                self.logger.info(f"Session ID: {session_id}")
                 pl_data += data.decode('utf-8', errors='ignore')
             
             matches = re.findall(b64_expression, pl_data)
             data = [(i, p) for i, p in enumerate(matches) if len(p) > 20]
         except Exception as e:
-            self.logger.error(f"Error extracting payload data: {e}")
+            self.logger.error(f">> Error extracting b64 payload data: {e}")
 
-        if export == True:
-            self._export_pl_data(data)
         return data
     
     def _extract_b64_pl_data_gz(self, payloads, to_server: bool, url_decode: bool):
         b64_data = []
         pl_data = ""
 
-        if to_server:
-            for session_id, data in payloads.items():
-                pl_data += data.decode('utf-8', errors='ignore')
-        else:
-            for data in payloads:
-                pl_data += data.decode('utf-8', errors='ignore')
+        try:
+            if to_server:
+                for session_id, data in payloads.items():
+                    pl_data += data.decode('utf-8', errors='ignore')
+            else:
+                for data in payloads:
+                    pl_data += data.decode('utf-8', errors='ignore')
 
-        if url_decode == True:
-            pl_data = urllib.parse.unquote(pl_data)
+            if url_decode == True:
+                pl_data = urllib.parse.unquote(pl_data)
 
-        b64_expression = r'(?:(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)'
-        matches = re.findall(b64_expression, pl_data)
-        data = [(i, p) for i, p in enumerate(matches) if len(p) > 10]
+            b64_expression = r'(?:(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?)'
+            matches = re.findall(b64_expression, pl_data)
+            data = [(i, p) for i, p in enumerate(matches) if len(p) > 10]
+        except Exception as e:
+            self.logger.error(f">> Error extracting b64 payload data: {e}")
 
         for i, blob in data:
             b64_data.append(blob)
@@ -102,16 +109,6 @@ class BaseExtractor:
             raw_data.append(slice_)
         return raw_data
     
-    def _export_pl_data(self, pl_data) -> None:
-        for i, blob in pl_data:
-            try:
-                path = os.path.join(ex_pl_data_path, f"pl_{i}.txt")
-                with open(path, 'wb') as file:
-                    file.write(blob)
-            except Exception as e:
-                self.logger.error(f">> Error writing payload to temp directory: {e}")
-                continue
-    
     def _print_header(self, pkt):
         if pkt.haslayer(Raw) and pkt.haslayer(TCP) and pkt.haslayer(IP):
             payload = bytes(pkt[TCP].payload)
@@ -119,7 +116,8 @@ class BaseExtractor:
                 headers, body = payload.split(b"\r\n\r\n", 1)
                 line = headers.decode("utf-8").split("\r\n")
                 if line:
-                    self.logger.info(line)
+                    self.logger.info("======================================")
+                    self.logger.debug(f">> HEADER: {line}")
     
     def _check_tmp_dir(self):
         tmp_dir = os.path.join(base_path, "ex_pl_data")
@@ -130,14 +128,17 @@ class BaseExtractor:
 class ShellSearcher:
     def __init__(self, pcap):
         self.pcap = pcap
-        self.logger = init_logger(log_path)
+        self.logger = init_logger('ShellSearcher', log_path)
+
+        self.logger.info(f"===============================================")
+        self.logger.info(f">> Initialized pcap: {self.pcap}")
         
     def run(self):
         self._extract_shells()
         self._extract_hex_key()
 
     def _extract_hex_key(self):
-        print(Fore.GREEN + ">> Searching for keys..\n")
+        print(f"{cyan}>> Searching for keys..{end}")
         hex_expression = r'["\']([0-9A-Fa-f]+)["\']'
         packets = rdpcap(self.pcap)
         
@@ -149,7 +150,7 @@ class ShellSearcher:
                 candidates = [(i, s) for i, s in enumerate(matches) if len(s) < 65]
                 if candidates:
                     for i, key in enumerate(candidates):
-                        print(Fore.CYAN + f">> Possible Key => {i}:{key}\n")
+                        print(f"{yellow}>> Possible Key => {key}{end}")
 
     def _extract_shells(self):
         cdt = datetime.datetime.now()
@@ -160,20 +161,7 @@ class ShellSearcher:
         payloads = {}
         ex_payloads = set()
 
-        # TODO: Cleanup strings/logic and add more for other webshells.
-        
-        ws_strings = [
-            'object[] iN = new object[] {r, p}', 'byte[] a =', 'byte[] data =', 'string pass =', 'string r = Request.Form["data"]', 
-            'aS.CreateInstance("SharPy")', '<% Import Namespace="System.Reflection" %>', '0x2f,0x6e,0xf6,0x63,0x36,0x38,0x34',
-            'Xor Asc(Mid(key,(i mod keySize)+1,1)))', 'Context.Session["payload"] == null', 'stringBuilder.Append(md5.Substring(0, 16))', 
-            '((System.Reflection.Assembly)Context.Session["payload"]).CreateInstance("LY")', '$c = $K[$i+1&15]', '$D[$i] = $D[$i]^$c',
-            'stringBuilder.Append(md5.Substring(16))', '<%@ Page Language="Jscript"%><%eval(Request.Item["', '$payloadName=', 
-            '$payload=encode($_SESSION[$payloadName],$key)', 'String xc=', 'xc.getBytes(),"AES"', 'CreateInstance("LY")', 
-            'object o = ((System.Reflection.Assembly', 'pass + key))).Replace', '<%@ Page Language="Jscript"%><%eval(Request.Item["', 
-            'string key="', '<?php include "\160\x68\141\x72\72\57\57"', 'basename(__FILE__)."\57\x78";__HALT_COMPILER()'
-        ]
-
-        print(Fore.GREEN + ">> Searching for shell strings in payloads..")
+        print(f"{cyan}>> Searching for webshells..{end}")
 
         try:
             for pkt in packets:
@@ -188,8 +176,8 @@ class ShellSearcher:
                 for i, pl in payloads.items():
                     if string in str(pl):
                         if pl not in ex_payloads:
-                            print(Fore.YELLOW + f">> Potential webshell found from: {i}")
-                            print(Fore.WHITE + f">> Check {ex_webshells_path}\n")
+                            print(f"{yellow}>> Potential webshell found from: {i}{end}")
+                            print(f"{magenta}>> Check {ex_webshells_path}{end}")
                             with open(output_file, "a") as ws_file:
                                 ws_file.write(f"IP: {i}\n Payload: {pl.decode('utf-8', errors='ignore')}\n\n")
                             ex_payloads.add(pl)
