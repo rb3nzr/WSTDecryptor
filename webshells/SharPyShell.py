@@ -19,24 +19,27 @@ class SharPyShellDecryptor:
         def transform_block(self, input_data):
             return self.decoder(input_data)
         
-    def __init__(self, pcap, ip, key, extract: bool):
+    def __init__(self, pcap, ip, port, key, extract: bool):
         self.pcap = pcap 
-        self.ip = ip 
+        self.ip = ip
+        self.port = port
         self.key = key 
         self.extract = extract
-        self.logger = init_logger(log_path)
+        self.logger = init_logger('SharPyShellDecryptor', log_path)
     
     def run(self):
-        print(Fore.GREEN + ">> Extracting TCP segment data, this may take a minute..\n")
-        extractor = SharPyDataExtractor(self.pcap, self.ip)
+        print(f"{cyan}>> Extracting TCP segment data, this may take a minute..{end}")
+        extractor = SharPyDataExtractor(self.pcap, self.ip, self.port)
         pl_data = extractor.run()
 
-        print(Fore.GREEN + ">> Decrypting data..\n")
+        print(f"{cyan}>> Decrypting data..{end}")
         self._process_data(pl_data)
 
-        print(Fore.GREEN + ">> Done! Check output/sharpy_output.cs")
+        print(f"{magenta}>> Done! Check output/sharpy_output.cs{end}")
+        print(f"{magenta}>> Check wstd_log.txt for details/errors{end}\n")
+
         if self.extract == True:
-            print(Fore.GREEN + ">> Check the output/sharpy_data for extracted modules/shellcode")
+            print(f"{magenta}>> Check the output/sharpy_data for extracted modules/shellcode{end}")
     
     def _decrypt(self, data, key):
         def xor_decrypt(data, key):
@@ -52,7 +55,7 @@ class SharPyShellDecryptor:
             o_stream.seek(0)
             decoded = o_stream.read()
         except Exception as e:
-            self.logger.error(f">> Error in decoding: {e}")
+            self.logger.warning(f">> Error in decoding: {e}")
             return None
 
         try:
@@ -65,7 +68,7 @@ class SharPyShellDecryptor:
             try:
                 decrypted = xor_decrypt(decoded, key)
             except Exception as e:
-                self.logger.error(f">> Decryption failed: {e}")
+                self.logger.warning(f">> Decryption failed: {e}")
                 return None
             
         return decrypted 
@@ -100,12 +103,12 @@ class SharPyShellDecryptor:
                             file.write(f"--------------------------- [ PAYLOAD {counter} ] ---------------------------\n\n")
                             file.write(result.decode('utf-8', errors='ignore'))
                     except Exception as e:
-                        self.logger.error(f">> Error processing payload {i}: {e}")
+                        self.logger.critical(f">> Error processing payload {i}: {e}")
         except IOError as e:
-            self.logger.error(f">> IOError: {e}")
+            self.logger.critical(f">> IOError: {e}")
         
         if self.extract == True:
-            print(Fore.GREEN + f">> Extracting any shellcode/modules/commands from the output..\n")
+            print(f"{cyan}>> Extracting any shellcode/modules/commands from the output..{end}")
             os.makedirs(temp_dir, exist_ok=True)
             self._extract_from_output(output_file, temp_dir, self.key)
 
@@ -118,17 +121,17 @@ class SharPyShellDecryptor:
                 check=True,
             )
         except subprocess.CalledProcessError as e:
-            print(Fore.RED + ">> Error running SharPyShellExtract.ps1")
-            print(Fore.RED + e.stderr)
+            print(f"{red}>> Error running SharPyShellExtract.ps1{end}")
+            self.logger.critical(f">> Error running SharPyShellExtract.ps1: {e.stderr}")
         except Exception as e:
-            print(Fore.RED + f">> Error running SharPyShellExtract.ps1: {e}")
+            self.logger.critical(f">> Error running SharPyShellExtract.ps1: {e}")
             return
 
 class SharPyDataExtractor(BaseExtractor):
-    def __init__(self, pcap, ip):
-        super().__init__(pcap, ip)
+    def __init__(self, pcap, ip, port):
+        super().__init__(pcap, ip, port)
         
     def run(self):
         payloads = self._extract_payloads()
-        pl_data = self._extract_b64_pl_data(payloads, export=False)
+        pl_data = self._extract_b64_pl_data(payloads)
         return pl_data
