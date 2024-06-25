@@ -2,7 +2,6 @@ from core.Config import *
 from core.Extractor import BaseExtractor
 from core.Utility import init_logger
 
-from colorama import Fore
 from Crypto.Cipher import AES 
 from Crypto.Util.Padding import unpad 
 import base64
@@ -12,37 +11,39 @@ import os
 import io 
 
 class GodzillaDecryptor:
-    def __init__(self, pcap, ip, key, raw=False):
+    def __init__(self, pcap, ip, port, key, raw=False):
         self.pcap = pcap
-        self.ip = ip 
+        self.ip = ip
+        self.port = port 
         self.key = key.encode()
         self.raw = raw
-        self.logger = init_logger(log_path)
+        self.logger = init_logger('GodzillaDecryptor', log_path)
 
     def run(self):
         to_server = '-'*32+''+'[ TO SERVER ]'+''+'-'*32
         from_server = '-'*32+''+'[ SERVER RESPONSE ]'+''+'-'*32
 
-        print(Fore.GREEN + ">> Extracting TCP segment data, this may take a minute..\n")
+        print(f"{cyan}>> Extracting TCP segment data, this may take a minute..{end}")
 
         if self.raw == True:
-            extractor = GodzillaDataExtractorRaw(self.pcap, self.ip)
+            extractor = GodzillaDataExtractorRaw(self.pcap, self.ip, self.port)
             pl_data_ts = extractor.get_data_ts()
             pl_data_fs = extractor.get_data_fs()
 
-            print(Fore.GREEN + ">> Decrypting data..\n")
+            print(f"{cyan}>> Decrypting data..{end}")
             self._process_data(pl_data_ts, to_server, ex_slices=False)
             self._process_data(pl_data_fs, from_server, ex_slices=False)
         else:
-            extractor = GodzillaDataExtractorBase64(self.pcap, self.ip)
+            extractor = GodzillaDataExtractorBase64(self.pcap, self.ip, self.port)
             pl_data_ts = extractor.get_data_ts()
             pl_data_fs = extractor.get_data_fs()
 
-            print(Fore.GREEN + ">> Decrypting data..\n")
+            print(f"{cyan}>> Decrypting data..{end}")
             self._process_data(pl_data_ts, to_server, ex_slices=False)
             self._process_data(pl_data_fs, from_server, ex_slices=True)
 
-        print(Fore.GREEN + ">> Done! Check output/godzilla_output.txt")
+        print(f"{magenta}>> Done! Check output/godzilla_output.txt{end}")
+        print(f"{magenta}>> Check wstd_log.txt for details{end}\n")
 
     def _decrypt(self, data, ex_slices: bool):
         def xor_decrypt(data, key):
@@ -69,7 +70,7 @@ class GodzillaDecryptor:
             try:
                 decrypted = xor_decrypt(encrypted, self.key)
             except Exception as e:
-                self.logger.error(f"Decryption failed: {e}")
+                self.logger.warning(f"Decryption failed: {e}")
                 return None         
         try:
             decompressed = gzip.decompress(decrypted)
@@ -89,7 +90,7 @@ class GodzillaDecryptor:
         try:
             return base64.b64decode(data)
         except base64.binascii.Error as e:
-            self.logger.error(f"Base64 decode error: {e}")
+            self.logger.warning(f"Base64 decode error: {e}")
             return None
     
     def _alt_gzip_decomp(self, data):
@@ -125,9 +126,9 @@ class GodzillaDecryptor:
                         if result:
                             file.write(result.decode('utf-8') + '\n\n')
                     except Exception as e:
-                        self.logger.error(f"Failed to process data segment: {i}: {e}")
+                        self.logger.critical(f"Failed to process data segment: {i}: {e}")
         except IOError as e:
-            self.logger.error(f"Failed to write to file {output_file}: {e}")  
+            self.logger.critical(f"Failed to write to file {output_file}: {e}")  
         
         try:
             with open(output_file_bin, 'ab') as file:
@@ -137,14 +138,14 @@ class GodzillaDecryptor:
                         if result:
                             file.write(result)
                     except Exception as e:
-                        self.logger.error(f"Failed to process data segment: {i}: {e}")
+                        self.logger.critical(f"Failed to process data segment: {i}: {e}")
         except IOError as e:
-            self.logger.error(f"Failed to write to file {output_file_bin}: {e}")
+            self.logger.critical(f"Failed to write to file {output_file_bin}: {e}")
 
 
 class GodzillaDataExtractorRaw(BaseExtractor):
-    def __init__(self, pcap, ip):
-        super().__init__(pcap, ip)
+    def __init__(self, pcap, ip, port):
+        super().__init__(pcap, ip, port)
         
     def get_data_ts(self):
         payloads_ts = self._extract_payloads()
@@ -156,8 +157,8 @@ class GodzillaDataExtractorRaw(BaseExtractor):
         return pl_data_fs
         
 class GodzillaDataExtractorBase64(BaseExtractor):
-    def __init__(self, pcap, ip):
-        super().__init__(pcap, ip)
+    def __init__(self, pcap, ip, port):
+        super().__init__(pcap, ip, port)
     
     def get_data_ts(self):
         payloads_ts = self._extract_payloads()
