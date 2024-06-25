@@ -2,6 +2,8 @@
 
 $shell = $argv[1];
 
+// convert then find the payload prefix/suffix and xor key
+
 try {
     $phar = new Phar($shell);
     $phar->extractTo(__DIR__ . '/../output/weevely_shells');
